@@ -4,7 +4,7 @@
  *
  * @title 		Protorust
  * @author 		VisionMise
- * @version  	0.1.1
+ * @version  	0.1.3
  * 
  *	Copyright 2015 VisionMise (Known Alias)
  *
@@ -34,9 +34,71 @@ var token 		= 'dfde64ccf5ed9490e5e699cc23b62838';
  * Plugin information
  */
 var title 		= 'protorust';
-var version 	= V(0,1,1);
+var version 	= V(0,1,3);
 var author 		= 'VisionMise';
 var resourceId 	= 0;
+
+
+/**
+ * Advanced Control
+ */
+var checkinInterval = 100;
+var printLevel      = 1;
+
+
+/** 
+ * Definitions
+ */
+var core = function() {
+
+    this.objects    = {};
+
+
+    this.event_Init                 = {
+        'type': ['null']
+    };
+
+    this.event_OnTick               = {
+        'type': ['null']
+    };
+
+    this.event_OnServerInitialized  = {
+        'type': ['null']
+    };
+
+    this.event_OnPlayerInit         = {
+        'type': ['player']
+    };
+
+    this.event_OnPlayerDisconnected = {
+        'type': ['player']
+    };
+
+    this.event_OnPlayerRespawned    = {
+        'type': ['player']
+    };
+
+    this.event_OnEntityTakeDamage   = {
+        'type': ['combatEntity', 'hitInfo']
+    };
+
+    this.objects.player             = function(objectRef) {
+        return {
+            'displayName':          objectRef.displayName   || 'string',
+            'userID':               objectRef.userID        || 'string'
+        };
+    };
+
+    this.objects.combatEntity       = function(objectRef) {
+
+    };
+
+    this.objects.hitInfo            = function(objectRef) {
+
+    };
+
+    return this;
+};
 
 
 /**
@@ -47,9 +109,12 @@ var $ 			= function(context) {
 	var self 		= this;
 
 	this.context 	= {};
-
+    this.core       = core;
+    this.printLevel = 1;
+    
 	this.init 		= function(context) {
 		this.context 	= context;
+        this.printLevel = printLevel;
 		return this;
 	};
 
@@ -71,12 +136,20 @@ var $ 			= function(context) {
         return baseObject;
 	};
 
-	this.console 	= function(textStr) {
-		if (this.context && this.context.name) {
-			print('[' + this.context.name + '] ' + textStr);
-		} else {
-			print(textStr);
-		}
+	this.console 	= function(textStr, weight) {
+        if (!weight) weight = this.printLevel;
+
+        var source  = (weight == -1) ? '[Error] ' : '';
+        if (this.context && this.context.name) {
+            source += "(" + this.context.name + ") ";
+        } else {
+            source += "(Protorust) ";
+        }
+
+        var output  = source + textStr;
+        if (parseInt(weight) <= parseInt(this.printLevel)) {
+            print(output);            
+        }            
 
 		return this;
 	};
@@ -124,10 +197,7 @@ var $ 			= function(context) {
 	};
 
 	this.request 		= function(url, data, callback) {
-
-		this.console("[" + this.context.type + "] Connecting to: " + url);
 		webrequests.EnqueuePost(url, data, callback.bind(this.context), this.context.Plugin);
-
 	};
 
 	this.hook 			= function(hook, callback) {
@@ -157,13 +227,22 @@ var protoPlugin = function(pluginName, author, version, resourceId) {
 	this.hook 		= {};
 	this.type 		= null;
 
+    this.sleep      = 0;
+    this.sleepTime  = 100;
+
 	this.init 		= function() {		
-		this.type 	= 'plugin';
+		this.type         = 'plugin';
+        this.sleepTime    = checkinInterval;
 		return this;
 	};
 
-	return this.init();
+    this.serverCheckin  = function(host) {        
+        $(this).request(host.url, 'token=' + host.token + '&event=checkin', function(code, result) {
+            $(this).console("Checked In [" + code + "]: " + result, 3);
+        });
+    };
 
+	return this.init();
 };
 
 
@@ -178,6 +257,7 @@ var protoServer = function(host, token, ssl, client) {
 	this.hook 		= {};
 	this.plugin 	= {};
 	this.name 		= 'Server';
+    this.token      = '';
 
 	this.init 		= function(host, token, ssl, client) {
 		this.host 	= host;
@@ -193,30 +273,38 @@ var protoServer = function(host, token, ssl, client) {
 	};
 
 
-	this.addListener= function(eventHook, callback) {
+    this.addListener= function(eventHook, callback) {
 
-		$(self.plugin).hook(eventHook, function(a1, a2, a3, a4, a5, a6) {
-			print("Event: " + eventHook)
-			var argStr 			= "event=" + eventHook + "&token=" + self.token;
-			/**testing*/
-			if (typeof a1 == 'object') {
-				var type 	= a1.GetType();
-				var api 	= $(self);
-				var func 	= api[type];
-				func(a1);
-			}
+        $(self.plugin).hook(eventHook, function(a1, a2, a3, a4, a5, a6) {
+            $(self.plugin).console("Server Event: " + eventHook, 3);
 
-			if (a1) argStr +=  "&0=" + JSON.stringify(a1);
-			if (a2) argStr +=  "&1=" + JSON.stringify(a2);
-			if (a3) argStr +=  "&2=" + JSON.stringify(a3);
-			if (a4) argStr +=  "&3=" + JSON.stringify(a4);
-			if (a5) argStr +=  "&4=" + JSON.stringify(a5);
-			if (a6) argStr +=  "&5=" + JSON.stringify(a6);
+            var args            = [a1,a2,a3,a4,a5,a6];
+            var argStr          = "event=" + eventHook + "&token=" + self.token;
+            var typeFunc        = "event_" + eventHook;
+            var typeNames       = $(self.plugin).core()[typeFunc]['type'];
+            var argBuffer       = {};
 
-			$(self.plugin).request(self.url, argStr, callback);
-		});
+            for (var i = 0; i <= typeNames.length - 1; i++) {
+                var typeName    = typeNames[i];
 
-	};
+                if (typeName != 'null') {
+                    var objDef  = JSON.stringify($(self.plugin).core().objects[typeName](args[i]));
+                    argStr += "&type=" + typeName + "&object=" + objDef;
+                    argBuffer[typeName] = args[i];
+                }
+            };
+            
+            $(self.plugin).console("Sending: " + argStr, 3);
+            $(self.plugin).request(self.url, argStr, function(code, result) {
+                callback(code, result, argBuffer, self.url, argStr);
+            });
+        });
+
+    };
+
+    this.parseResult    = function(result) {
+
+    };
 
 
 	return this.init(host, token, ssl, client);
@@ -229,21 +317,42 @@ var hostObject 	= new protoServer(host, token, ssl, pluginObject);
 
 
 $(pluginObject).hook('Init', function() {
-	$(this).console("Initialized");
+	$(this).console("Initialized", 1);
 });
 
 $(pluginObject).hook('OnServerInitialized', function() {
-	$(this).console("Server Initialized");
+	$(this).console("Server Initialized", 1);
 });
 
 $(pluginObject).hook('OnPlayerInit', function(player) {
-	$(this).console(player.name + " Connected");
+	$(this).console(player.name + " Connected", 2);
 });
 
-$(hostObject).hook('Init', function(code, result) {
-	$(pluginObject).console("[" + code + "]: " + result);
+$(pluginObject).hook('OnTick', function() {
+    pluginObject.sleep++;
+
+    if (pluginObject.sleep >= pluginObject.sleepTime) {
+        $(pluginObject).console("Checkin", 3);
+        pluginObject.sleep  = 1;
+        pluginObject.serverCheckin(hostObject);
+    }
+
 });
 
+$(hostObject).hook('Init', function(code, result, argBuffer) {
+	$(pluginObject).console("[" + code + "]: " + result, 3);
+});
 
+$(hostObject).hook('OnPlayerInit', function(code, result, argBuffer) {
+    $(pluginObject).console("[" + code + "]: " + result + " - " + argBuffer.player.displayName, 3);
+});
+
+$(hostObject).hook('OnPlayerDisconnected', function(code, result, argBuffer) {
+    $(pluginObject).console("[" + code + "]: " + result, 3);
+});
+
+$(hostObject).hook('OnPlayerRespawned', function(code, result, argBuffer) {
+    $(pluginObject).console("[" + code + "]: " + result, 3);
+});
 
 var protorust = $(pluginObject).object();
